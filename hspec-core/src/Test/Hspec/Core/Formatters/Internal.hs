@@ -45,11 +45,11 @@ formatterToFormat formatter config = Format {
       Success -> do
         increaseSuccessCount
         interpret $ M.exampleSucceeded formatter path info
-      Pending reason -> do
+      Pending _pendingLoc reason -> do
         increasePendingCount
         interpret $ M.examplePending formatter path info reason
-      Failure err -> do
-        addFailMessage loc path err
+      Failure failureLoc err -> do
+        addFailMessage (failureLoc <|> loc) path err
         interpret $ M.exampleFailed formatter path info err
 } where
     useColor = formatConfigUseColor config

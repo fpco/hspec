@@ -1,4 +1,5 @@
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RecordWildCards #-}
 module Test.Hspec.Core.Format (
   Format(..)
 , Progress
@@ -8,6 +9,8 @@ module Test.Hspec.Core.Format (
 , Item(..)
 , Result(..)
 , FailureReason(..)
+
+, printSlowSpecItems
 ) where
 
 import           Test.Hspec.Core.Spec (Progress, Location(..))
@@ -15,17 +18,24 @@ import           Test.Hspec.Core.Example (FailureReason(..))
 import           Test.Hspec.Core.Util (Path)
 import           Test.Hspec.Core.Clock
 
+import           Control.Monad.IO.Class
+import           Test.Hspec.Core.Compat
+import           Test.Hspec.Core.Util
+import           Text.Printf
+import           Data.List
+
 data Item = Item {
   itemLocation :: Maybe Location
 , itemDuration :: Seconds
 , itemInfo :: String
 , itemResult :: Result
-}
+} deriving Show
 
 data Result =
     Success
-  | Pending (Maybe String)
-  | Failure FailureReason
+  | Pending (Maybe Location) (Maybe String)
+  | Failure (Maybe Location) FailureReason
+  deriving Show
 
 data Format m = Format {
   formatRun :: forall a. m a -> IO a
@@ -34,3 +44,26 @@ data Format m = Format {
 , formatProgress :: Path -> Progress -> m ()
 , formatItem :: Path -> Item -> m ()
 }
+
+printSlowSpecItems :: MonadIO m => Int -> Format m -> IO (Format m)
+printSlowSpecItems n format@Format{..} = do
+  slow <- newIORef []
+  return format {
+      formatRun = \ action -> do
+        r <- formatRun action
+
+        putStrLn "\nSlow spec items:"
+
+        readIORef slow >>= mapM_ printItem . take n . reverse . sortOn (itemDuration . snd)
+        return r
+    , formatItem = \ path item -> do
+        liftIO $ modifyIORef slow ((path, item) :)
+        formatItem path item
+    }
+  where
+    printItem :: (Path, Item) -> IO ()
+    printItem (path, Item{..}) = putStrLn foo
+      where
+        -- FIXME: Need item location, not assertion location!
+        foo = (printf "  %1.3fs " itemDuration) ++ maybe "" formatLoc itemLocation ++ joinPath path
+    formatLoc (Location file line column) = file ++ ":" ++ show line ++ ":" ++ show column ++ ": "
